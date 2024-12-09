@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/TaeKwonZeus/pf"
@@ -17,5 +19,9 @@ func pingHandler(w pf.ResponseWriter[PingResponse], r *pf.Request[struct{}]) err
 func main() {
 	r := pf.NewRouter()
 	pf.Get(r, "/ping", pingHandler)
-	http.ListenAndServe(":8080", r)
+
+	port := "8080"
+
+	slog.Info("starting server", "port", port)
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }
