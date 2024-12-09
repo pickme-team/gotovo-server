@@ -20,6 +20,11 @@ func main() {
 	r := pf.NewRouter()
 	pf.Get(r, "/ping", pingHandler)
 
+	pf.AddSwagger(r, "/swagger", &pf.SwaggerInfo{
+		Title:   "Gotovo Server Gateway",
+		Version: "v0.0.0.0.0.0.0.0.0.0.0.1",
+	})
+
 	port := "8080"
 
 	slog.Info("starting server", "port", port)
