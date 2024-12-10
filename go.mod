@@ -2,7 +2,11 @@ module github.com/pickme-team/gotovo-server
 
 go 1.23.3
 
-require github.com/TaeKwonZeus/pf v1.0.1
+require (
+	github.com/TaeKwonZeus/pf v1.0.1
+	github.com/rabbitmq/amqp091-go v1.10.0
+	github.com/google/uuid v1.6.0
+)
 
 require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
