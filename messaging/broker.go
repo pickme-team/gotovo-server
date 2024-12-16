@@ -29,7 +29,8 @@ type Broker struct {
 	ch    *amqp.Channel
 	ready atomic.Bool
 
-	connCloseCh chan *amqp.Error
+	connClose chan *amqp.Error
+	chClose   chan *amqp.Error
 
 	callbacks  map[string]chan []byte
 	callbackMu sync.Mutex
@@ -44,7 +45,7 @@ func CreateBroker(url string) (*Broker, error) {
 	connCloseCh := make(chan *amqp.Error)
 	conn.NotifyClose(connCloseCh)
 
-	b := &Broker{conn: conn, connCloseCh: connCloseCh}
+	b := &Broker{conn: conn, connClose: connCloseCh}
 
 	err = b.initChannel()
 	if err != nil {
@@ -131,6 +132,8 @@ func (b *Broker) SendMessageRPC(queue string, body []byte) (res []byte, err erro
 // new callback listener. It should be called any time a channel op returns an
 // error, as per the docs for amqp.Channel
 func (b *Broker) initChannel() error {
+	b.ready.Store(false)
+
 	ch, err := b.conn.Channel()
 	if err != nil {
 		return err
@@ -141,35 +144,57 @@ func (b *Broker) initChannel() error {
 		return err
 	}
 
-	closeChannel := make(chan *amqp.Error, 1)
-	ch.NotifyClose(closeChannel)
+	b.chClose = make(chan *amqp.Error, 1)
+	ch.NotifyClose(b.chClose)
+	b.ch = ch
 
-	go func() {
-		cause := <-closeChannel
+	go b.consumeCallbacks()
+	go b.waitChannelReInit()
 
-		b.ready.Store(false)
-
-		if cause != nil {
-			slog.Error("messaging: channel closed due to error; reopening",
-				"err", cause)
-		}
-
-		// Continuously reopen the channel until it works
-		for err = b.initChannel(); err != nil; {
-			slog.Error("messaging: failed to initialize channel; retrying")
-
-			select {
-			// Stop after connection close
-			case <-b.connCloseCh:
-				return
-			case <-time.After(reInitDelay):
-			}
-		}
-
-		b.ready.Store(true)
-	}()
+	b.ready.Store(true)
 
 	return nil
+}
+
+func (b *Broker) consumeCallbacks() {
+	msgs, err := b.ch.Consume(CallbackQueueName, "", true, false, false, false, nil)
+	if err != nil {
+		slog.Error("messaging: failed to consume callback queue")
+		return
+	}
+
+	for msg := range msgs {
+		b.callbackMu.Lock()
+		callback, ok := b.callbacks[msg.CorrelationId]
+		b.callbackMu.Unlock()
+
+		if !ok {
+			slog.Error("messaging: correlation ID not found", "id", msg.CorrelationId)
+			continue
+		}
+		callback <- msg.Body
+	}
+}
+
+func (b *Broker) waitChannelReInit() {
+	cause := <-b.chClose
+
+	if cause != nil {
+		slog.Error("messaging: channel closed due to error; reopening",
+			"err", cause)
+	}
+
+	// Continuously reopen the channel until it works
+	for err := b.initChannel(); err != nil; {
+		slog.Error("messaging: failed to initialize channel; retrying")
+
+		select {
+		// Stop after connection close
+		case <-b.connClose:
+			return
+		case <-time.After(reInitDelay):
+		}
+	}
 }
 
 func declareQueues(ch *amqp.Channel) error {
